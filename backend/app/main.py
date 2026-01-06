@@ -1,10 +1,11 @@
 import uuid
 from fastapi import FastAPI, Depends
 from sqlalchemy.orm import Session
+from sqlalchemy import BigInteger
 from sqladmin import Admin, ModelView
 
 from .database import engine, Base, get_db, init_db_data
-from .models import Application, Category, CveDefinition, PermissionRule, Severity
+from .models import Application, Category, CveDefinition, PermissionRule, Severity, AppVersion
 from .schemas import ScanRequest, ScanResponse, AppScanResult, SecurityStatus, PrivacyStatus
 
 # 1. Tworzenie tabel w bazie danych (automatyczna migracja przy starcie)
@@ -12,38 +13,46 @@ Base.metadata.create_all(bind=engine)
 
 app = FastAPI(
     title="Security Analyzer API",
-    version="1.0.0",
+    version="2.0.0",
     description="System analizy bezpieczeństwa Androida (Inżynierka)"
 )
 
 # --- KONFIGURACJA PANELU ADMINA (SQLAdmin) ---
 admin = Admin(app, engine)
 
-# Widoki tabel w panelu admina
-class AppView(ModelView, model=Application):
-    column_list = [Application.package_name, Application.app_name]
+# Definiujemy klasy widoków (To naprawia Twój błąd)
+class ApplicationAdmin(ModelView, model=Application):
+    column_list = [Application.package_name, Application.app_name, Application.vendor]
+    icon = "fa-solid fa-mobile"
 
-class CategoryView(ModelView, model=Category):
+class AppVersionAdmin(ModelView, model=AppVersion):
+    column_list = [AppVersion.package_name, AppVersion.version_code, AppVersion.analyzed_at]
+    icon = "fa-solid fa-code-branch"
+
+class CategoryAdmin(ModelView, model=Category):
     column_list = [Category.name, Category.description]
+    icon = "fa-solid fa-layer-group"
 
-class CveView(ModelView, model=CveDefinition):
-    column_list = [CveDefinition.cve_id, CveDefinition.cvss_score]
-
-class RuleView(ModelView, model=PermissionRule):
+class RuleAdmin(ModelView, model=PermissionRule):
     column_list = [PermissionRule.category, PermissionRule.permission_name, PermissionRule.severity]
+    icon = "fa-solid fa-scale-balanced"
+
+class CveAdmin(ModelView, model=CveDefinition):
+    column_list = [CveDefinition.cve_id, CveDefinition.cvss_score]
+    icon = "fa-solid fa-shield-virus"
 
 # Rejestracja widoków
-admin.add_view(AppView)
-admin.add_view(CategoryView)
-admin.add_view(CveView)
-admin.add_view(RuleView)
+admin.add_view(ApplicationAdmin)
+admin.add_view(AppVersionAdmin)
+admin.add_view(CategoryAdmin)
+admin.add_view(RuleAdmin)
+admin.add_view(CveAdmin)
 
 # --- ENDPOINTY API ---
 
 # --- EVENT STARTOWY (SEED) ---
 @app.on_event("startup")
 def startup_event():
-    # Tworzymy nową sesję tylko do inicjalizacji
     db = next(get_db())
     init_db_data(db)
 
@@ -105,81 +114,76 @@ async def scan_apps(request: ScanRequest):
 async def scan_apps(request: ScanRequest, db: Session = Depends(get_db)):
     results = []
 
-    for app_data in request.apps:
-        # 1. Szukamy aplikacji w naszej bazie wiedzy
-        # (Musimy wiedzieć, czy to "Gra" czy "Narzędzie")
-        db_app = db.query(Application).filter(Application.package_name == app_data.package_name).first()
+    for app_payload in request.apps:
+        # 1. Znajdź lub utwórz Aplikację (baza wiedzy o pakiecie)
+        db_app = db.query(Application).filter(Application.package_name == app_payload.package_name).first()
         
-        # Domyślne statusy (na start optymistyczne)
-        privacy_light = "GREEN"
-        privacy_desc = "Brak zastrzeżeń."
+        if not db_app:
+            # Rejestrujemy nową aplikację (bez kategorii na razie)
+            db_app = Application(
+                package_name=app_payload.package_name,
+                app_name=app_payload.app_name
+            )
+            db.add(db_app)
+            db.commit()
+            db.refresh(db_app)
+
+        # 2. Znajdź lub utwórz Wersję (historia zmian)
+        db_version = db.query(AppVersion).filter(
+            AppVersion.package_name == app_payload.package_name,
+            AppVersion.version_code == app_payload.version_code
+        ).first()
+
+        if not db_version:
+            # To nowa wersja tej apki! Zapiszmy jej uprawnienia.
+            db_version = AppVersion(
+                package_name=db_app.package_name,
+                version_code=app_payload.version_code,
+                version_name=app_payload.version_name,
+                permissions_snapshot=app_payload.permissions # Zapisujemy listę jako JSON
+            )
+            db.add(db_version)
+            db.commit()
+        
+        # 3. Logika Oceny (Privacy Engine)
         violations = []
-        warning_count = 0
-        critical_count = 0
+        privacy_light = "GREEN"
+        privacy_desc = "Ok"
 
-        # --- LOGIKA UPRAWNIEŃ (PRIVACY ENGINE) ---
-        if db_app and db_app.categories:
-            # Dla każdej kategorii tej aplikacji (np. UTILITY)
-            for category in db_app.categories:
-                # Pobierz reguły dla tej kategorii
-                rules = db.query(PermissionRule).filter(PermissionRule.category_id == category.id).all()
-                
-                for rule in rules:
-                    # Czy aplikacja na telefonie ma zakazane uprawnienie?
-                    # Porównujemy nazwy uprawnień (np. android.permission.CAMERA)
-                    if rule.permission_name in app_data.permissions:
-                        # MAMY NARUSZENIE!
-                        if rule.severity == Severity.CRITICAL:
-                            critical_count += 1
-                            violations.append(f"[CRITICAL] {rule.risk_message}")
-                        else:
-                            warning_count += 1
-                            violations.append(f"[WARNING] {rule.risk_message}")
+        # Sprawdzamy reguły TYLKO jeśli aplikacja ma przypisaną kategorię
+        if db_app.category:
+            rules = db.query(PermissionRule).filter(PermissionRule.category_id == db_app.category.id).all()
+            
+            # Pobieramy uprawnienia z payloadu (lub z bazy wersji)
+            current_perms = app_payload.permissions
 
-            # Algorytm Oceny (Scoring)
-            if critical_count > 0:
-                privacy_light = "RED"
-                privacy_desc = f"Wykryto {critical_count} krytycznych naruszeń prywatności!"
-            elif warning_count >= 2: # Np. 2 ostrzeżenia = Czerwony
-                 privacy_light = "RED"
-                 privacy_desc = f"Wiele pomniejszych naruszeń ({warning_count})."
-            elif warning_count > 0:
-                privacy_light = "YELLOW"
-                privacy_desc = "Znaleziono potencjalne zagrożenia."
-        
+            for rule in rules:
+                if rule.permission_name in current_perms:
+                    msg = f"[{rule.severity}] {rule.risk_message}"
+                    violations.append(msg)
+            
+            if violations:
+                privacy_light = "RED" if any("CRITICAL" in v for v in violations) else "YELLOW"
+                privacy_desc = f"Znaleziono {len(violations)} naruszeń."
         else:
-            # Nie znamy tej aplikacji (nie ma jej w bazie)
-            privacy_light = "GRAY" # Lub GREEN
-            privacy_desc = "Aplikacja nieznana - brak kategorii w bazie."
+            privacy_light = "GRAY"
+            privacy_desc = "Aplikacja nieznana (brak kategorii)."
 
-        # --- LOGIKA CVE (SECURITY ENGINE) ---
-        # (Tutaj na razie prosto: sprawdzamy czy mamy CVE w bazie dla tej wersji)
-        # W przyszłości: Join z tabelą version_vulnerabilities
+        # 4. Logika CVE (Placeholder - tu wepniemy API w kolejnym kroku)
         sec_light = "GREEN"
-        sec_desc = "Brak znanych CVE."
         
-        # --- BUDOWANIE WYNIKU ---
-        result = AppScanResult(
-            package_name=app_data.package_name,
+        # Budowa wyniku
+        results.append(AppScanResult(
+            package_name=app_payload.package_name,
             security=SecurityStatus(
-                status_light=sec_light,
-                description=sec_desc,
-                cve_count=0,
-                max_cvss=0.0
+                status_light=sec_light, description="Brak danych CVE", cve_count=0, max_cvss=0.0
             ),
             privacy=PrivacyStatus(
-                status_light=privacy_light,
-                description=privacy_desc,
-                violation_count=len(violations),
-                risky_permissions=violations
+                status_light=privacy_light, description=privacy_desc, violation_count=len(violations), risky_permissions=violations
             )
-        )
-        results.append(result)
+        ))
 
-    return ScanResponse(
-        scan_id=str(uuid.uuid4()),
-        results=results
-    )
+    return ScanResponse(scan_id=str(uuid.uuid4()), results=results)
 
 
 @app.get("/")
