@@ -1,0 +1,41 @@
+version: '3.8'
+
+services:
+  # 1. BAZA DANYCH (PostgreSQL)
+  db:
+    image: postgres:15-alpine
+    container_name: analyzer_db
+    restart: always
+    env_file:
+      - .env
+    ports:
+      - "5432:5432" # Dostęp z zewnątrz (np. z DBeaver/pgAdmin)
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # 2. BACKEND (FastAPI)
+  backend:
+    build: ./backend
+    container_name: analyzer_backend
+    restart: always
+    env_file:
+      - .env
+    ports:
+      - "8000:8000" # API dostępne pod localhost:8000
+    volumes:
+      # Montujemy kod lokalny do kontenera = HOT RELOAD
+      # Edytujesz w IDE -> Zmiany widoczne od razu
+      - ./backend:/app
+    depends_on:
+      db:
+        condition: service_healthy # Backend ruszy dopiero jak baza wstanie
+    # Komenda uruchamiająca serwer developerski z przeładowaniem
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+
+volumes:
+  postgres_data:
