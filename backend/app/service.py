@@ -13,6 +13,7 @@ from .database import SessionLocal
 # NOWOŚĆ: Importujemy nasz scraper
 from .scraper import scrape_google_play 
 from .prompt_manager import build_analysis_prompt
+from .security import verify_app_signature
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -78,24 +79,40 @@ async def run_ai_analysis_worker(analysis_id: int, payload_dict: dict):
         analysis = db.query(models.AppAnalysis).filter(models.AppAnalysis.id == analysis_id).first()
         if not analysis:
             return
+        
+        
 
         # --- KROK 1: SCRAPING ---
         store_info = scrape_google_play(
             package_name=payload_dict.get('package_name'),
             user_version_name=payload_dict.get('version_name')
         )
+        # --- KROK 2: WERYFIKACJA PODPISU CYFROWEGO ---
+        sig_verification = verify_app_signature(
+            db, 
+            payload_dict.get('package_name'), 
+            payload_dict.get('signing_cert_hashes')
+        )
+
+        trust_context = ""
+        if sig_verification['status'] == "TRUSTED":
+            trust_context = f"Aplikacja jest cyfrowo podpisana przez zweryfikowanego producenta: {sig_verification['vendor_name']}."
+        else:
+            trust_context = "Podpis cyfrowy nie jest w bazie, nie możemy go sprawdzić (traktuj jako neutralny)."
+
+        store_info['signature_verification'] = trust_context
         
-        # --- KROK 2: BUDOWANIE PROMPTU (TERAZ CZYSTO!) ---
-        # Zamiast kleić stringi tutaj, delegujemy to do prompt_manager.py
+        # --- KROK 3: BUDOWANIE PROMPTU (TERAZ CZYSTO!) ---
+        # delegujemy do prompt_manager.py
         prompt = build_analysis_prompt(
             device_data=payload_dict, 
             store_data=store_info
         )
 
-        # Opcjonalnie: Logujemy fragment promptu dla pewności
-        # logger.info(f"📝 Prompt Preview: {prompt[:200]}...")
+        # Log fragment promptu dla pewności
+        # logger.info(f"Prompt Preview: {prompt[:200]}...")
 
-        # --- KROK 3: AI GENERATION ---
+        # --- KROK 4: AI GENERATION ---
         response = client.models.generate_content(
             model='gemini-2.0-flash', 
             contents=prompt,
@@ -107,7 +124,7 @@ async def run_ai_analysis_worker(analysis_id: int, payload_dict: dict):
         
         ai_data = json.loads(response.text)
         
-        # --- KROK 4: ZAPIS ---
+        # --- KROK 5: ZAPIS ---
         analysis.status = "COMPLETED"
         analysis.security_light = ai_data.get("security_score", 0)
         analysis.privacy_light = ai_data.get("privacy_score", 0)
@@ -122,10 +139,10 @@ async def run_ai_analysis_worker(analysis_id: int, payload_dict: dict):
         }
 
         db.commit()
-        logger.info(f"✅ Analiza zakończona dla {payload_dict.get('package_name')}")
+        logger.info(f"Analiza zakończona dla {payload_dict.get('package_name')}")
 
     except Exception as e:
-        logger.error(f"❌ Błąd workera: {str(e)}")
+        logger.error(f"Błąd workera: {str(e)}")
         try:
             analysis.status = "FAILED"
             analysis.short_summary = f"Error: {str(e)}"
