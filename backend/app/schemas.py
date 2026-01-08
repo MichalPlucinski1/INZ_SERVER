@@ -1,38 +1,47 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import List, Optional
 
-# --- MODELE WEJŚCIOWE (To wysyła Android) ---
+# --- Modele Wejściowe (Odbierane z telefonu) ---
 
 class AppPayload(BaseModel):
-    package_name: str
+    """
+    Odwzorowanie struktury JSON z dokumentacji Androida.
+    """
     app_name: str
-    version_code: int
-    version_name: str
-    permissions: List[str]  # np. ["android.permission.CAMERA", ...]
-
-class ScanRequest(BaseModel):
-    device_id: Optional[str] = None # Opcjonalne ID urządzenia
-    apps: List[AppPayload]          # Lista aplikacji do sprawdzenia
-
-# --- MODELE WYJŚCIOWE (To zwraca Serwer) ---
-
-class SecurityStatus(BaseModel):
-    status_light: str    # "GREEN", "YELLOW", "RED"
-    description: str     # np. "Brak znanych podatności"
-    cve_count: int
-    max_cvss: float
-
-class PrivacyStatus(BaseModel):
-    status_light: str    # "GREEN", "YELLOW", "RED"
-    description: str     # np. "Wykryto 2 podejrzane uprawnienia"
-    violation_count: int
-    risky_permissions: List[str]
-
-class AppScanResult(BaseModel):
     package_name: str
-    security: SecurityStatus
-    privacy: PrivacyStatus
+    version_name: str
+    version_code: int
+    target_sdk: int
+    min_sdk: int
+    installer_package: Optional[str] = None
+    is_from_store: bool
+    is_debuggable: bool
+    has_exported_components: bool
+    first_install_time: int
+    last_update_time: int
+    is_fingerprinting_suspected: bool
+    signing_cert_hashes: List[str]
+    permissions: List[str]
+    libraries: List[str]
 
-class ScanResponse(BaseModel):
-    scan_id: str
-    results: List[AppScanResult]
+class AnalysisRequest(BaseModel):
+    """
+    Główny obiekt POST wysyłany przez aplikację.
+    """
+    device_id: str
+    apps: List[AppPayload]
+
+# --- Modele Wyjściowe (Wysyłane do telefonu) ---
+
+class AppAnalysisResult(BaseModel):
+    package_name: str
+    status: str # PENDING, COMPLETED
+    
+    # Te pola są opcjonalne, bo przy statusie PENDING ich nie będzie
+    security_light: Optional[int] = 0
+    privacy_light: Optional[int] = 0
+    summary: Optional[str] = None
+    details: Optional[dict] = None # Pełen raport JSON
+
+class AnalysisResponse(BaseModel):
+    results: List[AppAnalysisResult]

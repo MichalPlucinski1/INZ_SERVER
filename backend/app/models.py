@@ -1,85 +1,56 @@
-from sqlalchemy import Column, Integer, String, ForeignKey, Table, Float, DateTime, Text, Enum, JSON, BigInteger
-from sqlalchemy.orm import relationship
+from sqlalchemy import Column, String, Integer, Boolean, DateTime, Text, Index
+from sqlalchemy.dialects.postgresql import JSONB, ARRAY
 from sqlalchemy.sql import func
-import enum
 from .database import Base
 
-# --- ENUMS ---
-class Severity(str, enum.Enum):
-    WARNING = "WARNING"
-    CRITICAL = "CRITICAL"
+class TrustedVendor(Base):
+    """
+    Tabela 1: Whitelista zaufanych producentów.
+    """
+    __tablename__ = "trusted_vendors"
 
-# Aplikacja <-> Kategorie
-app_category_association = Table(
-    'app_category_association',
-    Base.metadata,
-    Column('application_pkg', String, ForeignKey('applications.package_name')),
-    Column('category_id', Integer, ForeignKey('categories.id'))
-)
-
-# Wersja <-> CVE
-version_cve_association = Table(
-    'version_cve_association',
-    Base.metadata,
-    Column('app_version_id', Integer, ForeignKey('app_versions.id')),
-    Column('cve_id', String, ForeignKey('cve_definitions.cve_id'))
-)
-
-# --- MODELE ---
-
-class Category(Base):
-    __tablename__ = "categories"
     id = Column(Integer, primary_key=True, index=True)
-    name = Column(String, unique=True, index=True) 
-    description = Column(String, nullable=True)
-    
-    # Relacje
-    applications = relationship("Application", back_populates="category")
-    rules = relationship("PermissionRule", back_populates="category")
+    vendor_name = Column(String, index=True, nullable=False)
+    known_cert_hash = Column(String, unique=True, nullable=False) # SHA-256
+    trust_level = Column(String, default="VERIFIED") 
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 
-class Application(Base):
-    __tablename__ = "applications"
-    package_name = Column(String, primary_key=True, index=True)
+class AppAnalysis(Base):
+    """
+    Tabela 2: Wyniki analizy konkretnej wersji aplikacji.
+    """
+    __tablename__ = "app_analyses"
+
+    id = Column(Integer, primary_key=True, index=True)
+
+    # --- IDENTYFIKACJA WERSJI (Unikalna trójka) ---
+    package_name = Column(String, nullable=False, index=True)
+    version_code = Column(Integer, nullable=False)
+    signing_cert_hash = Column(String, nullable=False, index=True)
+
+    # --- DANE WEJŚCIOWE (Kontekst analizy) ---
     app_name = Column(String)
-    vendor = Column(String, nullable=True)
+    version_name = Column(String)
+    is_from_store = Column(Boolean)
     
-    # Cache kategorii (wypełniane przez AI lub ręcznie)
-    category_id = Column(Integer, ForeignKey("categories.id"), nullable=True)
-    category = relationship("Category", back_populates="applications")
+    # Przechowujemy listy jako JSONB, bo łatwiej je zrzucić z payloadu Androida
+    permissions = Column(JSONB) 
+    libraries = Column(JSONB)
 
-    # Historia wersji
-    versions = relationship("AppVersion", back_populates="application")
+    # --- WYNIKI AI ---
+    status = Column(String, default="PENDING") # PENDING, COMPLETED, ERROR, FAILED
+    
+    # Światła (1=Zielone, 2=Żółte, 3=Czerwone, 0=Brak danych)
+    security_light = Column(Integer, default=0)
+    privacy_light = Column(Integer, default=0)
+    
+    # Opisy
+    short_summary = Column(Text)
+    full_report = Column(JSONB) # Szczegóły dla kontrolek
 
-class AppVersion(Base):
-    __tablename__ = "app_versions"
-    
-    id = Column(Integer, primary_key=True, index=True)
-    package_name = Column(String, ForeignKey("applications.package_name"))
-    
-    # Używamy BigInteger, bo Androidowy version_code może być ogromny
-    version_code = Column(BigInteger) 
-    version_name = Column(String, nullable=True)
-    
-    # Zapisujemy uprawnienia jako JSON - to jest nasza "fotografia" tej wersji
-    permissions_snapshot = Column(JSON) 
-    
-    analyzed_at = Column(DateTime(timezone=True), server_default=func.now())
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
 
-    application = relationship("Application", back_populates="versions")
-    vulnerabilities = relationship("CveDefinition", secondary=version_cve_association)
-
-class CveDefinition(Base):
-    __tablename__ = "cve_definitions"
-    cve_id = Column(String, primary_key=True)
-    cvss_score = Column(Float)
-    description = Column(Text)
-
-class PermissionRule(Base):
-    __tablename__ = "permission_rules"
-    id = Column(Integer, primary_key=True, index=True)
-    category_id = Column(Integer, ForeignKey("categories.id"))
-    permission_name = Column(String)
-    severity = Column(Enum(Severity))
-    risk_message = Column(String)
-    
-    category = relationship("Category", back_populates="rules")
+    # Indeks unikalny: nie chcemy analizować tej samej wersji dwa razy
+    __table_args__ = (
+        Index('uq_app_analysis', 'package_name', 'version_code', 'signing_cert_hash', unique=True),
+    )
