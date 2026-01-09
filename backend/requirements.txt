@@ -1,8 +1,13 @@
-fastapi==0.104.1
-uvicorn[standard]==0.24.0
-sqlalchemy==2.0.23      # ORM do bazy
-psycopg2-binary==2.9.9  # Sterownik PostgreSQL
-pydantic==2.5.2         # Walidacja danych
-python-dotenv==1.0.0
+fastapi==0.109.0
+uvicorn[standard]==0.27.0
+pydantic==2.5.3
+sqlalchemy==2.0.25
+psycopg2-binary==2.9.9
+requests==2.31.0
+google-play-scraper==1.2.4
+google-genai>=0.3.0
+python-dotenv==1.0.1
 sqladmin==0.16.0
-requests
+cryptography==42.0.0
+python-multipart==0.0.6
+pyjwt

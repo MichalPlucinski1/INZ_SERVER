@@ -1,38 +1,58 @@
-from pydantic import BaseModel
-from typing import List, Optional
+# app/schemas.py
+from pydantic import BaseModel, Field
+from typing import List, Optional, Dict, Any
 
-# --- MODELE WEJŚCIOWE (To wysyła Android) ---
+
+class RegisterRequest(BaseModel):
+    uuid: str = Field(..., description="Unikalny identyfikator wygenerowany przez klienta (UUID)")
+
+class Token(BaseModel):
+    access_token: str
+    token_type: str
+
+
+# --- Modele WYJŚCIOWE (To co zwracamy do Androida) ---
+class AppAnalysisResult(BaseModel):
+    package_name: str
+    status: str
+    security_light: int
+    privacy_light: int
+    summary: Optional[str] = None
+    details: Optional[Dict[str, Any]] = None
+
+class AnalysisResponse(BaseModel):
+    results: List[AppAnalysisResult]
+
+# --- Modele WEJŚCIOWE (To co przysyła Android) ---
 
 class AppPayload(BaseModel):
-    package_name: str
+    # Identyfikacja
     app_name: str
+    package_name: str
     version_code: int
     version_name: str
-    permissions: List[str]  # np. ["android.permission.CAMERA", ...]
+    vendor: Optional[str] = None  # Np. "Android", "Microsoft Corporation..."
+    
+    # Bezpieczeństwo i Sklep
+    is_from_store: bool
+    installer_package: Optional[str] = None # Np. "com.android.vending" (Google Play)
+    is_debuggable: bool
+    signing_cert_hashes: List[str] = []
+    
+    # Nowe pola techniczne (bardzo ważne dla AI!)
+    target_sdk: Optional[int] = None
+    min_sdk: Optional[int] = None
+    first_install_time: Optional[int] = None
+    last_update_time: Optional[int] = None
+    
+    # Flagi zagrożeń
+    has_exported_components: bool = False
+    is_fingerprinting_suspected: bool = False # <--- Krytyczna flaga dla AI
+    
+    # Listy
+    permissions: List[str] = []
+    libraries: List[str] = []
 
-class ScanRequest(BaseModel):
-    device_id: Optional[str] = None # Opcjonalne ID urządzenia
-    apps: List[AppPayload]          # Lista aplikacji do sprawdzenia
-
-# --- MODELE WYJŚCIOWE (To zwraca Serwer) ---
-
-class SecurityStatus(BaseModel):
-    status_light: str    # "GREEN", "YELLOW", "RED"
-    description: str     # np. "Brak znanych podatności"
-    cve_count: int
-    max_cvss: float
-
-class PrivacyStatus(BaseModel):
-    status_light: str    # "GREEN", "YELLOW", "RED"
-    description: str     # np. "Wykryto 2 podejrzane uprawnienia"
-    violation_count: int
-    risky_permissions: List[str]
-
-class AppScanResult(BaseModel):
-    package_name: str
-    security: SecurityStatus
-    privacy: PrivacyStatus
-
-class ScanResponse(BaseModel):
-    scan_id: str
-    results: List[AppScanResult]
+# Główny Wrapper, bo JSON zaczyna się od {"apps": [...]}
+class AnalysisRequest(BaseModel):
+    apps: List[AppPayload]

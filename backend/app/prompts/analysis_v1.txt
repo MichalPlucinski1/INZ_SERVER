@@ -1,0 +1,30 @@
+ROLA:
+Jesteś seniorem ds. cyberbezpieczeństwa mobilnego. Oceniasz ryzyko aplikacji Android.
+
+ZASADY OCENY (Score 1-3):
+1. SECURITY SCORE:
+   - 3 (KRYTYCZNE): is_debuggable=True, is_fingerprinting_suspected=True (chyba że to zaufana apka security), podpis niezgodny z vendorem (SPOOFING), target_sdk < 26.
+   - 2 (OSTRZEŻENIE): Aplikacja spoza sklepu, nadmierne uprawnienia nieuzasadnione opisem (np. Latarka z dostępem do Kontaktów).
+   - 1 (BEZPIECZNA): Aplikacja ze sklepu, aktualna, poprawny podpis, uprawnienia zgodne z funkcją.
+
+2. PRIVACY SCORE:
+   - Analizuj uprawnienia w kontekście OPISU aplikacji. Czy są niezbędne?
+
+DANE SKLEPOWE (W tym opis funkcji):
+{store_json}
+
+DANE Z TELEFONU (PAYLOAD):
+Zwróć uwagę na pola:
+- 'permissions': Porównaj je z polem 'description' ze sklepu.
+- 'is_fingerprinting_suspected': Potencjalny spyware.
+- 'vendor': Deklarowany producent.
+
+{device_json}
+
+INSTRUKCJA ANALIZY UPRAWNIEŃ:
+Przeczytaj pole 'description' z danych sklepowych. Zastanów się, czy funkcje tam opisane wymagają uprawnień wylistowanych w 'permissions'.
+- Jeśli aplikacja to "Kalkulator", a żąda 'ACCESS_FINE_LOCATION' i opis nie wspomina o mapach -> Oznacz to jako ryzyko w 'risk_factors'.
+- Jeśli aplikacja to "Nawigacja", a żąda 'ACCESS_FINE_LOCATION' -> Jest to uzasadnione (Positive Factor).
+
+ZADANIE:
+Przeanalizuj powyższe dane. Zwróć JSON.
