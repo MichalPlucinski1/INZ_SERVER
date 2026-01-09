@@ -10,10 +10,12 @@ from typing import List
 
 from . import models, schemas
 from .database import SessionLocal
-# NOWOŚĆ: Importujemy nasz scraper
+
+# Importy naszych modułów pomocniczych
 from .scraper import scrape_google_play 
 from .prompt_manager import build_analysis_prompt
-from .security import verify_app_signature
+# ZMIANA: Importujemy nową funkcję do sprawdzania vendora i historii
+from .security import check_security_alerts
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -41,7 +43,7 @@ def get_or_create_analysis(db: Session, app_payload: schemas.AppPayload, backgro
     ).first()
 
     if existing_analysis:
-        # Retry logic
+        # Retry logic: Jeśli analiza jest FAILED lub "Pusta" (0), ponów ją
         if existing_analysis.status == "FAILED" or (existing_analysis.status == "COMPLETED" and existing_analysis.security_light == 0):
             logger.info(f"🔄 RETRY: Ponawiam analizę dla {app_payload.package_name}")
             existing_analysis.status = "PENDING"
@@ -74,44 +76,43 @@ def get_or_create_analysis(db: Session, app_payload: schemas.AppPayload, backgro
 async def run_ai_analysis_worker(analysis_id: int, payload_dict: dict):
     db = SessionLocal()
     try:
-        logger.info(f"[Worker] Start analizy ID: {analysis_id}")
+        logger.info(f"🤖 [Worker] Start analizy ID: {analysis_id}")
         
         analysis = db.query(models.AppAnalysis).filter(models.AppAnalysis.id == analysis_id).first()
         if not analysis:
             return
-        
-        
 
-        # --- KROK 1: SCRAPING ---
+        # --- KROK 1: SCRAPING (Oczy systemu) ---
         store_info = scrape_google_play(
             package_name=payload_dict.get('package_name'),
             user_version_name=payload_dict.get('version_name')
         )
-        # --- KROK 2: WERYFIKACJA PODPISU CYFROWEGO ---
-        sig_verification = verify_app_signature(
-            db, 
-            payload_dict.get('package_name'), 
-            payload_dict.get('signing_cert_hashes')
-        )
-
-        trust_context = ""
-        if sig_verification['status'] == "TRUSTED":
-            trust_context = f"Aplikacja jest cyfrowo podpisana przez zweryfikowanego producenta: {sig_verification['vendor_name']}."
-        else:
-            trust_context = "Podpis cyfrowy nie jest w bazie, nie możemy go sprawdzić (traktuj jako neutralny)."
-
-        store_info['signature_verification'] = trust_context
         
-        # --- KROK 3: BUDOWANIE PROMPTU (TERAZ CZYSTO!) ---
-        # delegujemy do prompt_manager.py
+        # --- KROK 2: SECURITY CHECKS (Vendor + Historia) ---
+        # Tutaj następuje weryfikacja czy 'vendor' z Androida pasuje do hasha w bazie
+        security_report = check_security_alerts(
+            db, 
+            package_name=payload_dict.get('package_name'),
+            claimed_vendor=payload_dict.get('vendor'), # <-- Pobieramy pole 'vendor' z JSONa Androida
+            incoming_hashes=payload_dict.get('signing_cert_hashes', [])
+        )
+        
+        # Przygotowanie tekstu alertów dla AI
+        security_context_str = "\n".join(security_report['alerts'])
+        if not security_context_str:
+            security_context_str = "Brak ostrzeżeń dotyczących podpisu cyfrowego (Status: OK)."
+
+        # Wstrzykujemy wynik weryfikacji do obiektu store_info.
+        # Dzięki temu trafi on do promptu automatycznie przez prompt_manager.
+        store_info['security_alerts'] = security_context_str
+        store_info['signature_status'] = security_report['status']
+
+        # --- KROK 3: BUDOWANIE PROMPTU ---
         prompt = build_analysis_prompt(
             device_data=payload_dict, 
             store_data=store_info
         )
-
-        # Log fragment promptu dla pewności
-        # logger.info(f"Prompt Preview: {prompt[:200]}...")
-
+        
         # --- KROK 4: AI GENERATION ---
         response = client.models.generate_content(
             model='gemini-2.0-flash', 
@@ -134,15 +135,15 @@ async def run_ai_analysis_worker(analysis_id: int, payload_dict: dict):
             "verdict": ai_data.get("verdict_details"),
             "risk_factors": ai_data.get("risk_factors", []),
             "positive_factors": ai_data.get("positive_factors", []),
-            # Zapisujemy też wynik scrapera w raporcie, żeby mieć ślad w bazie
-            "store_verification": store_info 
+            "store_verification": store_info, # Zawiera teraz też dane o podpisie
+            "ai_signature_verdict": security_report['status'] # Dodatkowy ślad w bazie
         }
 
         db.commit()
-        logger.info(f"Analiza zakończona dla {payload_dict.get('package_name')}")
+        logger.info(f"✅ Analiza zakończona dla {payload_dict.get('package_name')}")
 
     except Exception as e:
-        logger.error(f"Błąd workera: {str(e)}")
+        logger.error(f"❌ Błąd workera: {str(e)}")
         try:
             analysis.status = "FAILED"
             analysis.short_summary = f"Error: {str(e)}"

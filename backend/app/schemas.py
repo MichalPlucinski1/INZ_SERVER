@@ -1,47 +1,58 @@
+# app/schemas.py
 from pydantic import BaseModel, Field
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 
-# --- Modele Wejściowe (Odbierane z telefonu) ---
 
-class AppPayload(BaseModel):
-    """
-    Odwzorowanie struktury JSON z dokumentacji Androida.
-    """
-    app_name: str
-    package_name: str
-    version_name: str
-    version_code: int
-    target_sdk: int
-    min_sdk: int
-    installer_package: Optional[str] = None
-    is_from_store: bool
-    is_debuggable: bool
-    has_exported_components: bool
-    first_install_time: int
-    last_update_time: int
-    is_fingerprinting_suspected: bool
-    signing_cert_hashes: List[str]
-    permissions: List[str]
-    libraries: List[str]
+class RegisterRequest(BaseModel):
+    uuid: str = Field(..., description="Unikalny identyfikator wygenerowany przez klienta (UUID)")
 
-class AnalysisRequest(BaseModel):
-    """
-    Główny obiekt POST wysyłany przez aplikację.
-    """
-    device_id: str
-    apps: List[AppPayload]
+class Token(BaseModel):
+    access_token: str
+    token_type: str
 
-# --- Modele Wyjściowe (Wysyłane do telefonu) ---
 
+# --- Modele WYJŚCIOWE (To co zwracamy do Androida) ---
 class AppAnalysisResult(BaseModel):
     package_name: str
-    status: str # PENDING, COMPLETED
-    
-    # Te pola są opcjonalne, bo przy statusie PENDING ich nie będzie
-    security_light: Optional[int] = 0
-    privacy_light: Optional[int] = 0
+    status: str
+    security_light: int
+    privacy_light: int
     summary: Optional[str] = None
-    details: Optional[dict] = None # Pełen raport JSON
+    details: Optional[Dict[str, Any]] = None
 
 class AnalysisResponse(BaseModel):
     results: List[AppAnalysisResult]
+
+# --- Modele WEJŚCIOWE (To co przysyła Android) ---
+
+class AppPayload(BaseModel):
+    # Identyfikacja
+    app_name: str
+    package_name: str
+    version_code: int
+    version_name: str
+    vendor: Optional[str] = None  # Np. "Android", "Microsoft Corporation..."
+    
+    # Bezpieczeństwo i Sklep
+    is_from_store: bool
+    installer_package: Optional[str] = None # Np. "com.android.vending" (Google Play)
+    is_debuggable: bool
+    signing_cert_hashes: List[str] = []
+    
+    # Nowe pola techniczne (bardzo ważne dla AI!)
+    target_sdk: Optional[int] = None
+    min_sdk: Optional[int] = None
+    first_install_time: Optional[int] = None
+    last_update_time: Optional[int] = None
+    
+    # Flagi zagrożeń
+    has_exported_components: bool = False
+    is_fingerprinting_suspected: bool = False # <--- Krytyczna flaga dla AI
+    
+    # Listy
+    permissions: List[str] = []
+    libraries: List[str] = []
+
+# Główny Wrapper, bo JSON zaczyna się od {"apps": [...]}
+class AnalysisRequest(BaseModel):
+    apps: List[AppPayload]

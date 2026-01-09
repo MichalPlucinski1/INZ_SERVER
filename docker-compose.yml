@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   # 1. BAZA DANYCH (PostgreSQL)
   db:
@@ -9,7 +7,7 @@ services:
     env_file:
       - .env
     ports:
-      - "5432:5432" # Dostęp z zewnątrz (np. z DBeaver/pgAdmin)
+      - "5432:5432" 
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -29,13 +27,13 @@ services:
       - "8000:8000" # API dostępne pod localhost:8000
     volumes:
       # Montujemy kod lokalny do kontenera = HOT RELOAD
-      # Edytujesz w IDE -> Zmiany widoczne od razu
       - ./backend:/app
+      - ./certs:/certs
     depends_on:
       db:
         condition: service_healthy # Backend ruszy dopiero jak baza wstanie
     # Komenda uruchamiająca serwer developerski z przeładowaniem
-    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --ssl-keyfile /certs/server.key --ssl-certfile /certs/server.crt
 
 volumes:
   postgres_data:

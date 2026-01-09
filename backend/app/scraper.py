@@ -1,30 +1,26 @@
 # app/scraper.py
 from google_play_scraper import app, exceptions
 import logging
-import datetime
 
 logger = logging.getLogger(__name__)
 
 def scrape_google_play(package_name: str, user_version_name: str = None) -> dict:
     """
     Pobiera dane o aplikacji ze sklepu Google Play (Polska).
-    Zwraca słownik z flagą 'exists_in_store'.
     """
     logger.info(f"🔍 Scraping Google Play: {package_name}")
     
     try:
-        # Pobieranie danych (lang='pl' daje nam polskie opisy dla AI)
+        # Pobieranie danych
         store_data = app(
             package_name,
             lang='pl', 
             country='pl'
         )
         
-        # Logika porównywania wersji
         latest_version = store_data.get('version', 'Nieznana')
         is_outdated = False
         
-        # Proste porównanie stringów (wersje bywają skomplikowane np. "Varies with device")
         if user_version_name and latest_version != 'Nieznana':
             if user_version_name != latest_version:
                 is_outdated = True
@@ -37,7 +33,10 @@ def scrape_google_play(package_name: str, user_version_name: str = None) -> dict
             "store_version": latest_version,
             "is_outdated": is_outdated,
             "privacy_policy": store_data.get('privacyPolicy'),
-            "updated_timestamp": store_data.get('updated')
+            "updated_timestamp": store_data.get('updated'),
+            
+            "summary": store_data.get('summary'),       # Krótkie hasło reklamowe
+            "description": store_data.get('description') # Pełny opis funkcji
         }
 
     except exceptions.NotFoundError:
