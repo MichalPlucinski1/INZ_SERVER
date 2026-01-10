@@ -8,8 +8,8 @@ from google import genai
 from google.genai import types
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
-from typing import List
-
+from typing import List, Dict
+from sqlalchemy import tuple_
 from . import models, schemas
 from .database import SessionLocal
 from .scraper import scrape_google_play 
@@ -57,6 +57,7 @@ class AiFlatResponse(BaseModel):
 # --- LOGIKA BIZNESOWA ---
 
 def get_or_create_analysis(db: Session, app_payload: schemas.AppPayload, background_tasks):
+
     primary_hash = ""
     if app_payload.signing_cert_hashes:
         primary_hash = app_payload.signing_cert_hashes[0].replace(":", "").replace(" ", "").upper()
@@ -196,3 +197,104 @@ async def run_ai_analysis_worker(analysis_id: int, payload_dict: dict):
         except: pass
     finally:
         db.close()
+
+
+
+
+
+def get_or_create_batch_analysis(db: Session, apps_payload: List[schemas.AppPayload], background_tasks) -> Dict[str, models.AppAnalysis]:
+    """
+    Optymalizuje obsługę wielu aplikacji naraz (Batching).
+    Zamiast 57 zapytań do bazy, robi 1 SELECT i 1 INSERT.
+    """
+    results_map = {}
+    new_records = []
+    tasks_to_schedule = []
+
+    # 1. Przygotowanie kluczy do wyszukiwania (package_name, version_code, hash)
+    # Tworzymy mapę {unique_key: payload}
+    payload_map = {}
+    search_keys = []
+
+    for app in apps_payload:
+        primary_hash = "UNKNOWN"
+        if app.signing_cert_hashes:
+            # Hash już jest wyczyszczony w main.py, ale dla pewności:
+            primary_hash = app.signing_cert_hashes[0].replace(":", "").replace(" ", "").upper()
+        
+        # Klucz unikalności analizy: Pakiet + Wersja + Hash
+        key = (app.package_name, app.version_code, primary_hash)
+        payload_map[key] = app
+        search_keys.append(key)
+
+    # 2. BATCH SELECT: Pobieramy istniejące analizy jednym zapytaniem
+    # Używamy konstrukcji SQL: WHERE (col1, col2, col3) IN ((v1,v2,v3), ...)
+    if search_keys:
+        existing_analyses = db.query(models.AppAnalysis).filter(
+            tuple_(models.AppAnalysis.package_name, models.AppAnalysis.version_code, models.AppAnalysis.signing_cert_hash)\
+            .in_(search_keys)
+        ).all()
+    else:
+        existing_analyses = []
+
+    # 3. Mapowanie istniejących wyników
+    for analysis in existing_analyses:
+        # Retry logic: Jeśli FAILED lub (COMPLETED ale ocena 0) -> oznaczamy do ponowienia
+        if analysis.status == "FAILED" or (analysis.status == "COMPLETED" and analysis.security_light == 0):
+            logger.info(f"🔄 BATCH RETRY: {analysis.package_name}")
+            analysis.status = "PENDING"
+            # Znajdź payload dla tej analizy
+            key = (analysis.package_name, analysis.version_code, analysis.signing_cert_hash)
+            if key in payload_map:
+                tasks_to_schedule.append((analysis.id, payload_map[key].model_dump()))
+        
+        results_map[analysis.package_name] = analysis
+
+    # 4. Wykrywanie brakujących (NEW)
+    # Sprawdzamy, których kluczy z payload_map nie znaleźliśmy w bazie
+    for key, app_payload in payload_map.items():
+        if app_payload.package_name not in results_map:
+            # Tworzymy nowy rekord PENDING
+            new_analysis = models.AppAnalysis(
+                package_name=app_payload.package_name,
+                version_code=app_payload.version_code,
+                signing_cert_hash=key[2], # Hash z klucza
+                app_name=app_payload.app_name,
+                vendor_name=app_payload.vendor,
+                
+                # Flagi techniczne
+                is_from_store=app_payload.is_from_store,
+                installer_package=app_payload.installer_package,
+                is_debuggable=app_payload.is_debuggable,
+                has_exported_components=app_payload.has_exported_components,
+                is_fingerprinting_suspected=app_payload.is_fingerprinting_suspected,
+                target_sdk=app_payload.target_sdk,
+                
+                permissions=app_payload.permissions,
+                libraries=app_payload.libraries,
+                status="PENDING"
+            )
+            new_records.append(new_analysis)
+            # Dodamy do tasks_to_schedule PO zapisie do bazy (żeby mieć ID)
+
+    # 5. BULK INSERT: Zapisujemy wszystkie nowe rekordy jedną transakcją
+    if new_records:
+        logger.info(f"🆕 BATCH INSERT: Dodawanie {len(new_records)} nowych aplikacji.")
+        db.add_all(new_records)
+        db.commit() # Tylko jeden commit na 57 apek!
+        
+        # Odświeżamy ID i kolejkujemy zadania
+        for analysis in new_records:
+            db.refresh(analysis)
+            results_map[analysis.package_name] = analysis
+            
+            # Znajdź payload
+            key = (analysis.package_name, analysis.version_code, analysis.signing_cert_hash)
+            if key in payload_map:
+                tasks_to_schedule.append((analysis.id, payload_map[key].model_dump()))
+
+    # 6. Kolejkowanie zadań w tle (FastAPI BackgroundTasks)
+    for analysis_id, payload_dump in tasks_to_schedule:
+        background_tasks.add_task(run_ai_analysis_worker, analysis_id, payload_dump)
+
+    return results_map

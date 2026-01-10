@@ -126,54 +126,52 @@ async def analyze_installed_apps(
 ):
     logger.info(f"📥 [ANALYZE] Request od: {current_user_uuid}, Apek: {len(payload.apps)}")
 
-    results = []
+    # 1. Wstępne czyszczenie hashy w payloadzie
     for app_data in payload.apps:
-        # Czyścimy hashe
         if app_data.signing_cert_hashes:
             app_data.signing_cert_hashes = [
                 h.replace(":", "").replace(" ", "").upper() for h in app_data.signing_cert_hashes
             ]
-            
-        record = service.get_or_create_analysis(db, app_data, background_tasks)
+
+    # 2. BATCH PROCESSING (Serce optymalizacji)
+    # Zamiast wołać DB w pętli, wołamy raz i dostajemy mapę {package_name: AnalysisRecord}
+    analysis_map = service.get_or_create_batch_analysis(db, payload.apps, background_tasks)
+
+    results = []
+    
+    # 3. Budowanie odpowiedzi na podstawie mapy wyników
+    for app_data in payload.apps:
+        record = analysis_map.get(app_data.package_name)
         
-        # --- LOGIKA NULLOWANIA DLA PENDING ---
-        # Jeśli status to PENDING lub NEW, nie chcemy dawać fałszywych zer/false.
-        # Chcemy dać NULL, żeby UI pokazało loader.
-        # Wyjątek: FAILED też chcemy pokazać (zazwyczaj jako czerwony/szary alert), więc traktujemy jak gotowy.
-        
+        if not record:
+            # Teoretycznie niemożliwe, bo batch tworzy brakujące, ale dla bezpieczeństwa:
+            continue
+
+        # --- LOGIKA NULLOWANIA DLA PENDING (Bez zmian) ---
         is_ready = (record.status == "COMPLETED" or record.status == "FAILED")
-        
-        # Przygotowanie danych, jeśli gotowe
         
         is_in_store_val = False
         if is_ready and record.full_report and "store_info" in record.full_report:
             is_in_store_val = record.full_report["store_info"].get("exists_in_store", False)
 
         ui_result = schemas.AndroidUiResult(
-            # Pola identyfikacyjne (Zawsze obecne)
             package_name=record.package_name,
             app_name=record.app_name if record.app_name else app_data.app_name,
             version_code=record.version_code,
             status=record.status,
             
-            # --- Pola z wartością tylko gdy COMPLETED ---
             security_light=record.security_light if is_ready else None,
             privacy_light=record.privacy_light if is_ready else None,
             
             is_up_to_date=record.is_up_to_date if is_ready else None,
             is_in_store=is_in_store_val if is_ready else None,
-            
-            # downloaded_from_store - decydujemy dać None jeśli pending, żeby UI wczytało się całe naraz
             downloaded_from_store=record.is_from_store if is_ready else None,
-            
             is_cert_suspicious=record.cert_status if is_ready else None,
-            
             target_sdk_secure=(record.target_sdk >= 26) if (is_ready and record.target_sdk) else None,
             debug_flag_off=(not record.is_debuggable) if is_ready else None,
             has_exported_components=record.has_exported_components if is_ready else None,
             is_fingerprinting_suspected=record.is_fingerprinting_suspected if is_ready else None,
             privacy_policy_exists=record.privacy_policy_exists if is_ready else None,
-            
             short_summary=record.short_summary if is_ready else None,
             permissions=record.permissions if (is_ready and record.permissions) else [],
             full_report=record.full_report if is_ready else None
@@ -182,9 +180,13 @@ async def analyze_installed_apps(
 
     final_response = schemas.AnalysisResponse(results=results)
     
-    logger.info(f"RESPONSE:\n{final_response.model_dump_json(indent=2)}")
+    # logger.info(f"📤 RESPONSE:\n{final_response.model_dump_json(indent=2)}")
     
     return final_response
+
+@app.get("/health")
+def health_check():
+    return {"status": "ok"}
 
 # --- ZAKOMENTOWANY UPLOAD CERT ---
 # @app.post("/admin/upload-cert")
