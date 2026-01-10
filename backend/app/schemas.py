@@ -2,57 +2,70 @@
 from pydantic import BaseModel, Field
 from typing import List, Optional, Dict, Any
 
+# --- WEJŚCIE (Bez zmian) ---
+class AppPayload(BaseModel):
+    app_name: str
+    package_name: str
+    version_code: int
+    version_name: str
+    vendor: Optional[str] = None
+    is_from_store: bool
+    installer_package: Optional[str] = None
+    is_debuggable: bool
+    signing_cert_hashes: List[str] = []
+    target_sdk: Optional[int] = None
+    min_sdk: Optional[int] = None
+    first_install_time: Optional[int] = None
+    last_update_time: Optional[int] = None
+    has_exported_components: bool = False
+    is_fingerprinting_suspected: bool = False
+    permissions: List[str] = []
+    libraries: List[str] = []
+
+class AnalysisRequest(BaseModel):
+    apps: List[AppPayload]
 
 class RegisterRequest(BaseModel):
-    uuid: str = Field(..., description="Unikalny identyfikator wygenerowany przez klienta (UUID)")
+    uuid: str
 
 class Token(BaseModel):
     access_token: str
     token_type: str
 
+# --- WYJŚCIE (Zmiany na Optional) ---
 
-# --- Modele WYJŚCIOWE (To co zwracamy do Androida) ---
-class AppAnalysisResult(BaseModel):
+class AndroidUiResult(BaseModel):
+    # Pola identyfikacyjne (Zawsze muszą być, żeby Android wiedział co odświeżyć)
     package_name: str
+    app_name: str
+    version_code: int
     status: str
-    security_light: int
-    privacy_light: int
-    summary: Optional[str] = None
-    details: Optional[Dict[str, Any]] = None
+    
+    # --- Poniższe pola będą NULL jeśli status == PENDING ---
+    
+    # Światła
+    security_light: Optional[int] = None
+    privacy_light: Optional[int] = None
+    
+    # Flagi logiczne
+    is_up_to_date: Optional[bool] = None
+    is_in_store: Optional[bool] = None
+    downloaded_from_store: Optional[bool] = None
+    
+    # Status certyfikatu
+    is_cert_suspicious: Optional[str] = None
+    
+    # Flagi techniczne
+    target_sdk_secure: Optional[bool] = None
+    debug_flag_off: Optional[bool] = None
+    has_exported_components: Optional[bool] = None
+    is_fingerprinting_suspected: Optional[bool] = None
+    privacy_policy_exists: Optional[bool] = None
+    
+    # Treści
+    short_summary: Optional[str] = None
+    permissions: List[str] = [] # Lista może być pusta
+    full_report: Optional[Dict[str, Any]] = None
 
 class AnalysisResponse(BaseModel):
-    results: List[AppAnalysisResult]
-
-# --- Modele WEJŚCIOWE (To co przysyła Android) ---
-
-class AppPayload(BaseModel):
-    # Identyfikacja
-    app_name: str
-    package_name: str
-    version_code: int
-    version_name: str
-    vendor: Optional[str] = None  # Np. "Android", "Microsoft Corporation..."
-    
-    # Bezpieczeństwo i Sklep
-    is_from_store: bool
-    installer_package: Optional[str] = None # Np. "com.android.vending" (Google Play)
-    is_debuggable: bool
-    signing_cert_hashes: List[str] = []
-    
-    # Nowe pola techniczne (bardzo ważne dla AI!)
-    target_sdk: Optional[int] = None
-    min_sdk: Optional[int] = None
-    first_install_time: Optional[int] = None
-    last_update_time: Optional[int] = None
-    
-    # Flagi zagrożeń
-    has_exported_components: bool = False
-    is_fingerprinting_suspected: bool = False # <--- Krytyczna flaga dla AI
-    
-    # Listy
-    permissions: List[str] = []
-    libraries: List[str] = []
-
-# Główny Wrapper, bo JSON zaczyna się od {"apps": [...]}
-class AnalysisRequest(BaseModel):
-    apps: List[AppPayload]
+    results: List[AndroidUiResult]
