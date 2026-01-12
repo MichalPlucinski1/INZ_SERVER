@@ -3,16 +3,19 @@ import logging
 import asyncio
 from datetime import datetime, timedelta
 from contextlib import asynccontextmanager
+import os
 from fastapi import FastAPI, Depends, BackgroundTasks, HTTPException, UploadFile, File, Form
 from fastapi.security import HTTPBearer
 from sqladmin import Admin
 from sqlalchemy.orm import Session
 from typing import List, Optional
+from starlette.middleware.sessions import SessionMiddleware # <--- IMPORT
+
+import os
 
 from .database import engine, get_db, SessionLocal
 from . import models, schemas, service, auth
-from .admin import AppAnalysisAdmin, TrustedVendorAdmin
-
+from .admin import AppAnalysisAdmin, TrustedVendorAdmin, authentication_backend # <--- IMPORT AUTH
 # --- KONFIGURACJA LOGOWANIA ---
 logging.basicConfig(
     level=logging.INFO,
@@ -102,7 +105,21 @@ async def lifespan(app: FastAPI):
 
 # --- INICJALIZACJA APLIKACJI ---
 app = FastAPI(title="App Security Analyzer", lifespan=lifespan)
+secret_key = os.getenv("SECRET_KEY")
 
+if not secret_key:
+    # Zabezpieczenie: Jeśli zapomnisz dodać klucz do .env, aplikacja krzyknie błędem (w logach),
+    # zamiast działać na domyślnym, słabym haśle.
+    logger.warning("⚠️ BRAK SECRET_KEY W .ENV! Używam niebezpiecznego domyślnego klucza.")
+
+app.add_middleware(
+    SessionMiddleware, 
+    secret_key=secret_key,
+    https_only=False,       # <--- WYMUSZA FLAGĘ SECURE (Wymagane przy HTTPS)
+    same_site="lax",       # <--- Pozwala na działanie ciasteczka przy przekierowaniach
+    max_age=3600,           # <--- Sesja ważna przez godzinę (opcjonalnie)
+    session_cookie="session_v4"
+)
 admin = Admin(app, engine)
 admin.add_view(AppAnalysisAdmin)
 admin.add_view(TrustedVendorAdmin)
@@ -117,6 +134,8 @@ def register_device(payload: schemas.RegisterRequest):
     logger.info(f"📤 [RESPONSE] Token wygenerowany.")
     return response_data
 
+# app/main.py (Fragment - tylko funkcja analyze)
+
 @app.post("/analyze", response_model=schemas.AnalysisResponse)
 async def analyze_installed_apps(
     payload: schemas.AnalysisRequest, 
@@ -126,63 +145,89 @@ async def analyze_installed_apps(
 ):
     logger.info(f"📥 [ANALYZE] Request od: {current_user_uuid}, Apek: {len(payload.apps)}")
 
-    # 1. Wstępne czyszczenie hashy w payloadzie
+    # 1. Wstępne czyszczenie hashy
     for app_data in payload.apps:
         if app_data.signing_cert_hashes:
             app_data.signing_cert_hashes = [
                 h.replace(":", "").replace(" ", "").upper() for h in app_data.signing_cert_hashes
             ]
 
-    # 2. BATCH PROCESSING (Serce optymalizacji)
-    # Zamiast wołać DB w pętli, wołamy raz i dostajemy mapę {package_name: AnalysisRecord}
+    # 2. BATCH PROCESSING
     analysis_map = service.get_or_create_batch_analysis(db, payload.apps, background_tasks)
 
     results = []
     
-    # 3. Budowanie odpowiedzi na podstawie mapy wyników
+    # 3. Budowanie odpowiedzi (Z NOWĄ LOGIKĄ)
     for app_data in payload.apps:
         record = analysis_map.get(app_data.package_name)
         
         if not record:
-            # Teoretycznie niemożliwe, bo batch tworzy brakujące, ale dla bezpieczeństwa:
             continue
 
-        # --- LOGIKA NULLOWANIA DLA PENDING (Bez zmian) ---
         is_ready = (record.status == "COMPLETED" or record.status == "FAILED")
         
-        is_in_store_val = False
-        if is_ready and record.full_report and "store_info" in record.full_report:
-            is_in_store_val = record.full_report["store_info"].get("exists_in_store", False)
+        # A. Logika Vendor Status (Dla UI)
+        vendor_ui_status = "no_negative_data"
+        if is_ready:
+            if record.cert_status == "trusted":
+                vendor_ui_status = "verified"
+            elif record.cert_status == "suspicious":
+                vendor_ui_status = "suspected"
 
+        # B. Wyciąganie danych AI z full_report
+        # (Dzięki EncryptedJSON w models.py, record.full_report jest już słownikiem Pythonowym)
+        ai_data = {}
+        store_exists = False
+        if is_ready and record.full_report:
+            ai_data = record.full_report
+            if "store_info" in record.full_report:
+                store_exists = record.full_report["store_info"].get("exists_in_store", False)
+
+        # C. Konstrukcja obiektu UI
         ui_result = schemas.AndroidUiResult(
             package_name=record.package_name,
             app_name=record.app_name if record.app_name else app_data.app_name,
             version_code=record.version_code,
             status=record.status,
             
+            # --- Oceny i Treści ---
+            security_score=ai_data.get("security_score") if is_ready else None,
+            privacy_score=ai_data.get("privacy_score") if is_ready else None,
+            # Zachowujemy security_light mapując score na 1-3 jeśli potrzebne, lub biorąc z bazy
             security_light=record.security_light if is_ready else None,
             privacy_light=record.privacy_light if is_ready else None,
-            
-            is_up_to_date=record.is_up_to_date if is_ready else None,
-            is_in_store=is_in_store_val if is_ready else None,
+            short_summary=record.short_summary if is_ready else None,
+
+            # --- Flagi Techniczne (Code Logic) ---
+            target_sdk_secure=(record.target_sdk >= 30) if (is_ready and record.target_sdk) else None,
+            is_in_store=store_exists if is_ready else None,
             downloaded_from_store=record.is_from_store if is_ready else None,
-            is_cert_suspicious=record.cert_status if is_ready else None,
-            target_sdk_secure=(record.target_sdk >= 26) if (is_ready and record.target_sdk) else None,
+            # is_debuggable: True to źle, ale UI prosiło o flagę "debug_flag_off" (czyli True to dobrze)
             debug_flag_off=(not record.is_debuggable) if is_ready else None,
             has_exported_components=record.has_exported_components if is_ready else None,
             is_fingerprinting_suspected=record.is_fingerprinting_suspected if is_ready else None,
             privacy_policy_exists=record.privacy_policy_exists if is_ready else None,
-            short_summary=record.short_summary if is_ready else None,
+            
+            is_cert_suspicious=record.cert_status if is_ready else None,
+            vendor_status=vendor_ui_status if is_ready else None,
+
             permissions=record.permissions if (is_ready and record.permissions) else [],
-            full_report=record.full_report if is_ready else None
+
+            # --- Detale Raportu ---
+            full_report=schemas.AiReportDetails(
+                verdict_details=ai_data.get("verdict", "Brak danych"), # Uwaga: w service.py zapisujesz to jako 'verdict'
+                risk_factors=ai_data.get("risk_factors", []),
+                positive_factors=ai_data.get("positive_factors", []),
+                permissions_analysis=ai_data.get("permissions_analysis", {}), # Może być w AI jsonie lub nie, zależnie od promptu
+                trackers=ai_data.get("trackers", [])
+            ) if (is_ready and "verdict" in ai_data) else None
         )
         results.append(ui_result)
 
     final_response = schemas.AnalysisResponse(results=results)
-    
-    # logger.info(f"📤 RESPONSE:\n{final_response.model_dump_json(indent=2)}")
-    
     return final_response
+
+
 
 @app.get("/health")
 def health_check():

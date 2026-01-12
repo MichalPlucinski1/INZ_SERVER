@@ -6,62 +6,56 @@ from . import models
 logger = logging.getLogger(__name__)
 
 def normalize_hash(cert_hash: str) -> str:
-    """
-    Przygotowuje hash do porównania/zapisu.
-    Android wysyła teraz czysty HEX (np. AABBCC), ale dla pewności
-    usuwamy białe znaki i wymuszamy wielkie litery.
-    """
     if not cert_hash:
         return ""
-    # Usuwamy ewentualne śmieci, gdyby jednak coś wpadło
     return cert_hash.strip().replace(":", "").replace(" ", "").upper()
 
 def check_security_alerts(db: Session, package_name: str, claimed_vendor: str, incoming_hashes: list[str]) -> dict:
-    """
-    Weryfikuje podpis i historię.
-    """
     alerts = []
     status = "NEUTRAL"
     
-    # 1. Pobieramy i czyścimy hash (teraz zakładamy, że Android wysyła czysty, ale normalizujemy)
-    current_hash = normalize_hash(incoming_hashes[0]) if incoming_hashes else None
+    # POPRAWKA LOGIKI: Tworzymy zbiór (set) wszystkich hashy przesłanych przez apkę
+    incoming_hashes_clean = {normalize_hash(h) for h in incoming_hashes if h}
 
-    if not current_hash:
+    if not incoming_hashes_clean:
         return {"status": "UNKNOWN", "alerts": ["Brak hasha certyfikatu"]}
 
-    # --- SCENARIUSZ A: Weryfikacja Vendora (TrustedVendor) ---
+    # --- SCENARIUSZ A: Weryfikacja Vendora ---
     trusted_vendor = None
     if claimed_vendor:
-        # Szukamy vendora po nazwie
         trusted_vendor = db.query(models.TrustedVendor).filter(
             models.TrustedVendor.vendor_name == claimed_vendor
         ).first()
 
     if trusted_vendor:
-        # Porównujemy znormalizowany hash z bazy z tym z Androida
-        # (W bazie też trzymamy już tylko czyste hashe)
-        if normalize_hash(trusted_vendor.known_cert_hash) == current_hash:
+        known_hash = normalize_hash(trusted_vendor.known_cert_hash)
+        
+        # Sprawdzamy, czy ZNANY hash znajduje się w liście hashy aplikacji
+        if known_hash in incoming_hashes_clean:
             status = "TRUSTED"
             alerts.append(f"✅ ZWERYFIKOWANO: Aplikacja {package_name} podpisana przez {trusted_vendor.vendor_name}.")
         else:
             status = "DANGER"
-            alerts.append(f"⛔ SPOOFING: Aplikacja podaje się za '{claimed_vendor}', ale podpis jest NIEPOPRAWNY!")
+            alerts.append(f"⛔ SPOOFING: Aplikacja podaje się za '{claimed_vendor}', ale żaden z jej podpisów nie pasuje do wzorca!")
 
-    # --- SCENARIUSZ B: Spójność Historii (Consistency Check) ---
-    # Szukamy ostatniej analizy dla tego pakietu.
+    # --- SCENARIUSZ B: Spójność Historii ---
+    # Bierzemy "reprezentatywny" hash (np. pierwszy posortowany alfabetycznie dla powtarzalności) do porównania historii
+    current_primary_hash = sorted(list(incoming_hashes_clean))[0]
+    
     last_analysis = db.query(models.AppAnalysis).filter(
         models.AppAnalysis.package_name == package_name
     ).order_by(models.AppAnalysis.created_at.desc()).first()
 
     if last_analysis:
-        # Pobieramy stary hash z bazy i upewniamy się, że jest znormalizowany (na wypadek starych danych)
         history_hash = normalize_hash(last_analysis.signing_cert_hash)
-        
-        if history_hash and history_hash != current_hash:
+        # Jeśli poprzedni hash był inny i nie ma go w obecnych (rotacja kluczy jest możliwa, ale rzadka w ten sposób)
+        if history_hash and history_hash not in incoming_hashes_clean:
+             # Jeśli status to TRUSTED (zweryfikowany vendor), to zmiana klucza jest mniej groźna (mogła być rotacja po stronie firmy)
+             # Jeśli status to NEUTRAL, zmiana jest podejrzana.
             msg = (f"⚠️ ZMIANA PODPISU: Pakiet {package_name} zmienił klucz! "
-                   f"Poprzednio: {history_hash[:8]}..., Teraz: {current_hash[:8]}...")
+                   f"Poprzednio: {history_hash[:8]}...")
             
-            if status != "DANGER":
+            if status != "DANGER" and status != "TRUSTED":
                 status = "WARNING"
             
             alerts.append(msg)

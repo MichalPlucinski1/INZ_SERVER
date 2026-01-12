@@ -32,40 +32,44 @@ class Token(BaseModel):
     access_token: str
     token_type: str
 
-# --- WYJŚCIE (Zmiany na Optional) ---
+# --- WYJŚCIE (Updated) ---
+
+class AiReportDetails(BaseModel):
+    verdict_details: str
+    risk_factors: List[str]
+    positive_factors: List[str]
+    permissions_analysis: Dict[str, Any]
+    # trackers: List[str]
+    # Opcjonalnie możemy tu powtórzyć score dla wygody UI
+    security_score: int 
+    privacy_score: int
 
 class AndroidUiResult(BaseModel):
-    # Pola identyfikacyjne (Zawsze muszą być, żeby Android wiedział co odświeżyć)
     package_name: str
     app_name: str
     version_code: int
     status: str
     
-    # --- Poniższe pola będą NULL jeśli status == PENDING ---
-    
-    # Światła
+    # GŁÓWNY WERDYKT AI (1=Safe, 2=Warn, 3=Crit)
     security_light: Optional[int] = None
     privacy_light: Optional[int] = None
     
-    # Flagi logiczne
+    # Flagi techniczne (wspomagające)
     is_up_to_date: Optional[bool] = None
     is_in_store: Optional[bool] = None
     downloaded_from_store: Optional[bool] = None
-    
-    # Status certyfikatu
     is_cert_suspicious: Optional[str] = None
-    
-    # Flagi techniczne
+    vendor_status: Optional[str] = None
     target_sdk_secure: Optional[bool] = None
     debug_flag_off: Optional[bool] = None
     has_exported_components: Optional[bool] = None
     is_fingerprinting_suspected: Optional[bool] = None
     privacy_policy_exists: Optional[bool] = None
     
-    # Treści
     short_summary: Optional[str] = None
-    permissions: List[str] = [] # Lista może być pusta
-    full_report: Optional[Dict[str, Any]] = None
+    permissions: List[str] = [] 
+    
+    full_report: Optional[AiReportDetails] = None 
 
 class AnalysisResponse(BaseModel):
     results: List[AndroidUiResult]

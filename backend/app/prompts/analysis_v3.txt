@@ -12,14 +12,13 @@ DANE Z URZĄDZENIA:
 {device_json}
 
 ===========================================================
-ALGORYTM OCENY (LOGIKA DETERMINISTYCZNA)
+ZASADY WERDYKTU (Skala 1-3)
 ===========================================================
+Musisz przypisać konkretną klasę ryzyka. Nie używaj wartości pośrednich.
 
-1. ANALIZA LINKU POLITYKI (Privacy Policy Check):
-   - JEŚLI 'privacy_policy_check.alive' == false ORAZ 'exists_in_store' == true -> Ustaw Privacy Score na minimum 2 (lub 3 przy wrażliwych uprawnieniach).
-   - JEŚLI link prowadzi do 'google.com' lub 'play.google.com' -> Traktuj jako brak polityki.
 
-2. SECURITY SCORE (Liczba całkowita 1, 2 lub 3):
+
+1. SECURITY SCORE (Liczba całkowita 1, 2 lub 3):
    - WYNIK 3 (CRITICAL):
      * 'is_debuggable' jest true.
      * 'is_fingerprinting_suspected' jest true.
@@ -29,34 +28,49 @@ ALGORYTM OCENY (LOGIKA DETERMINISTYCZNA)
      * 'target_sdk' < 31.
      * Brak działającej polityki prywatności.
      * Aplikacja spoza sklepu, ale uprawnienia bezpieczne.
+     * 'privacy_policy_check.alive' == false ORAZ 'exists_in_store' == true -> Ustaw na minimum 2 
+
    - WYNIK 1 (SAFE):
      * Aplikacja ze sklepu, aktualna, podpis OK, brak flag debug/fingerprint.
 
-3. PRIVACY SCORE (Liczba całkowita 1, 2 lub 3):
-   - WYNIK 3: Brak/Fałszywa polityka + Uprawnienia wrażliwe.
-   - WYNIK 2: Szerokie uprawnienia (np. Lokalizacja w tle) + Brak jasnego uzasadnienia w opisie.
-   - WYNIK 1: Uprawnienia minimalne, zgodne z funkcją.
+    Jeżeli aplikacja ma zweryfikowany certyfikat, SECURITY SCORE możesz traktować luźniej, powinna być bezpieczna mimo uprawnień.
 
+2. PRIVACY SCORE (1, 2 lub 3):
+   - OCENA 3 (CRITICAL):
+     * Brak polityki prywatności (błąd 404, brak linku) ORAZ uprawnienia wrażliwe, które nie sa potrzebne do realizacji funkcji z opisu aplikacji
+     * Agresywne trackery reklamowe połączone z szerokimi uprawnieniami i fingerprintingiem
+     * Security Score jest ustawiony na 3, a apliakcja zbiera duzo danych (ryzyko wycieku)
+   - OCENA 2 (WARNING):
+     * Uprawnienia "na wyrost" (np. Latarka chce Lokalizacji), ale jest polityka prywatności.
+     * Duża liczba trackerów analitycznych.
+     * fingerprinting = True
+   - OCENA 1 (SAFE):
+     * Uprawnienia minimalne i uzasadnione funkcją.
 ===========================================================
 WYMAGANY FORMAT WYJŚCIOWY (JSON SCHEMA)
 ===========================================================
-Zwróć TYLKO poprawny JSON. Żadnych bloków markdown (```json). Żadnego tekstu przed ani po.
+Zwróć TYLKO poprawny JSON. Żadnych bloków markdown, (```json). Żadnego tekstu przed ani po.
 
 Klucze wymagane w JSON:
 {
-  "security_score": int,    // Tylko: 1, 2 lub 3
-  "privacy_score": int,     // Tylko: 1, 2 lub 3
-  "short_summary": string,  // Jedno zdanie po polsku podsumowujące werdykt.
-  "verdict_details": string,// Techniczne uzasadnienie decyzji (dlaczego taka ocena).
-  "risk_factors": [string], // Lista konkretnych zagrożeń (np. "Włączony tryb debugowania", "Martwy link polityki").
-  "positive_factors": [string] // Lista zalet (np. "Podpis cyfrowy zweryfikowany").
+  "security_score": int,      // Tylko: 1, 2 lub 3
+  "privacy_score": int,       // Tylko: 1, 2 lub 3
+  "short_summary": string,    // Jedno zdanie po polsku, opisz bezpieczeństwo i prywatność aplikacji.
+  "verdict_details": string,  // Techniczne uzasadnienie werdyktu. Nie podawaj surowych danych i wartości zmiennych, tylko interpretuj, np. "Aplikacja jest debugowalna". Szczegółowy opis uprawnień jest poniżej, tutaj napisz tylko, że są nadmiarowe i stanowią ryzyko lub nie.
+  "risk_factors": [string],   // Lista konkretnych zagrożeń.
+  "positive_factors": [string], // Lista zalet.
+  "trackers": [string], // lista wykrytych trackerów
+  "permissions_analysis": {
+      "dangerous_count": int,
+      "summary": string // krótkie podsumowanie niepokojących uprawnień, które nie zgadzają się z opisem.
+  }
 }
 
 PRZYKŁAD IDEALNEJ ODPOWIEDZI (Pattern):
 {
   "security_score": 3,
   "privacy_score": 2,
-  "short_summary": "Krytyczne zagrożenie: Aplikacja jest wersją debugoperską i posiada niedziałającą politykę prywatności.",
+  "short_summary": "Krytyczne zagrożenie: Aplikacja ma włączone debuggowanie i posiada niedziałającą politykę prywatności.",
   "verdict_details": "Wykryto flagę android:debuggable=true, co umożliwia podłączenie debuggera JDWP. Dodatkowo link do polityki prywatności zwraca błąd 404.",
   "risk_factors": [
     "Aplikacja jest debugowalna (is_debuggable: true)",
@@ -64,7 +78,14 @@ PRZYKŁAD IDEALNEJ ODPOWIEDZI (Pattern):
   ],
   "positive_factors": [
     "Aplikacja pochodzi z oficjalnego sklepu Google Play"
-  ]
+  ],
+  "trackers": [],
+
+  "permissions_analysis": {
+    "dangerous_count": 2,
+      "summary": "uprawnienia do dokładnej lokalizacji i Internetu są zbędne dla podanego opisu aplikacji"
+  }
+
 }
 
-TERAZ WYGENERUJ JSON DLA PODANYCH DANYCH:
+TERAZ WYGENERUJ JSON DLA PODANYCH DANYCH

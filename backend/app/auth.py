@@ -1,5 +1,6 @@
 # app/auth.py
 import os
+import sys
 import jwt
 from datetime import datetime, timedelta
 from fastapi import Depends, HTTPException, status
@@ -8,7 +9,12 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-SECRET_KEY = os.getenv("SECRET_KEY", "fallback_secret_key")
+SECRET_KEY = os.getenv("SECRET_KEY")
+
+if not SECRET_KEY:
+    print("❌ CRITICAL ERROR: Brak SECRET_KEY w .env! Nie można uruchomić bezpiecznego auth.")
+    sys.exit(1)
+
 ALGORITHM = os.getenv("ALGORITHM", "HS256")
 
 # ZMIANA: Zamiast OAuth2PasswordBearer używamy HTTPBearer.

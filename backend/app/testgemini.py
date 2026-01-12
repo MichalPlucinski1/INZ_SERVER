@@ -17,7 +17,7 @@ except ImportError:
 
 # 2. Sprawdzamy klucz API
 # (Jeśli uruchomisz to w Dockerze, pobierze klucz z .env kontenera)
-api_key = os.getenv("GOOGLE_API_KEY")
+api_key = "AIzaSyA0P0LEtCVKZHhjmb1V9kmxhJXzKt7Njf4"
 
 if not api_key:
     # Fallback dla testów lokalnych (jeśli odpalasz bez dockera)
@@ -40,7 +40,7 @@ try:
     prompt = "Jesteś prostym testem. Odpowiedz tylko JSONem: {'status': 'ok', 'message': 'Hello World'}"
     
     response = client.models.generate_content(
-        model='gemini-1.5-flash',
+        model='gemini-2.0-flash',
         contents=prompt,
         config=types.GenerateContentConfig(
             response_mime_type='application/json'
@@ -53,3 +53,13 @@ try:
 except Exception as e:
     print(f"\n❌ BŁĄD POŁĄCZENIA: {e}")
     # Częsty błąd: quota exceeded, bad request, geo-block
+
+
+# response = client.models.generate_content(
+#                         model='gemini-2.0-flash', 
+#                         contents=prompt,
+#                         config=types.GenerateContentConfig(
+#                             response_mime_type='application/json',
+#                             response_schema=AiFlatResponse
+#                         )
+#                     )
