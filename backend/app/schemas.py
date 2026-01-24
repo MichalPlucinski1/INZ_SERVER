@@ -9,9 +9,9 @@ class AppPayload(BaseModel):
     version_code: int
     version_name: str
     vendor: Optional[str] = None
-    is_from_store: bool
+    is_from_store: bool = None
     installer_package: Optional[str] = None
-    is_debuggable: bool
+    is_debuggable: bool = None
     signing_cert_hashes: List[str] = []
     target_sdk: Optional[int] = None
     min_sdk: Optional[int] = None
@@ -31,35 +31,48 @@ class RegisterRequest(BaseModel):
 class Token(BaseModel):
     access_token: str
     token_type: str
+class PermissionsAnalysisData(BaseModel):
+    dangerous_count: int
+    summary: str # Krótkie podsumowanie niepokojących uprawnień w relacji do opisu
 
-# --- WYJŚCIE (Updated) ---
+class AiFlatResponse(BaseModel):
+    """
+    Model używany bezpośrednio przez GeminiClient do wymuszenia 
+    formatu JSON opisanego w Twoim prompcie.
+    """
+    security_score: int       # 1, 2 lub 3
+    privacy_score: int        # 1, 2 lub 3
+    short_summary: str        # Jedno zdanie po polsku
+    verdict_details: str      # Techniczne uzasadnienie werdyktu
+    risk_factors: List[str]   # Lista konkretnych zagrożeń
+    positive_factors: List[str] # Lista zalet
+    trackers: List[str]       # Lista wykrytych trackerów
+    permissions_analysis: PermissionsAnalysisData
 
-class AiReportDetails(BaseModel):
-    verdict_details: str
-    risk_factors: List[str]
-    positive_factors: List[str]
-    permissions_analysis: Dict[str, Any]
-    # trackers: List[str]
-    # Opcjonalnie możemy tu powtórzyć score dla wygody UI
-    security_score: int 
-    privacy_score: int
+# --- WYJŚCIE (Dane przesyłane do UI aplikacji) ---
+
+class AiReportDetails(AiFlatResponse):
+    """
+    Rozszerzony raport dla UI. Dziedziczy pola z AiFlatResponse, 
+    co zapewnia pełną spójność z wynikiem bota.
+    """
+    pass
 
 class AndroidUiResult(BaseModel):
     package_name: str
     app_name: str
     version_code: int
-    status: str
+    status: str # PENDING, PROCESSING, COMPLETED, FAILED
     
-    # GŁÓWNY WERDYKT AI (1=Safe, 2=Warn, 3=Crit)
+    # GŁÓWNE OCENY (1=Safe, 2=Warn, 3=Crit)
     security_light: Optional[int] = None
     privacy_light: Optional[int] = None
     
-    # Flagi techniczne (wspomagające)
+    # Flagi techniczne (Interpretowane dla UI)
     is_up_to_date: Optional[bool] = None
     is_in_store: Optional[bool] = None
     downloaded_from_store: Optional[bool] = None
-    is_cert_suspicious: Optional[str] = None
-    vendor_status: Optional[str] = None
+    vendor_status: Optional[str] = None # verified, suspected, no_negative_data
     target_sdk_secure: Optional[bool] = None
     debug_flag_off: Optional[bool] = None
     has_exported_components: Optional[bool] = None
@@ -69,6 +82,7 @@ class AndroidUiResult(BaseModel):
     short_summary: Optional[str] = None
     permissions: List[str] = [] 
     
+    # Szczegółowy raport AI (pojawia się tylko gdy status == COMPLETED)
     full_report: Optional[AiReportDetails] = None 
 
 class AnalysisResponse(BaseModel):

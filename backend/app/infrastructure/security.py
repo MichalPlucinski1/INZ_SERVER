@@ -1,7 +1,7 @@
 # app/security.py
 import logging
 from sqlalchemy.orm import Session
-from . import models
+from app.infrastructure.database import models
 
 logger = logging.getLogger(__name__)
 

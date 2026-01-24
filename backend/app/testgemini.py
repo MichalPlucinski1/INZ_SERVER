@@ -17,7 +17,7 @@ except ImportError:
 
 # 2. Sprawdzamy klucz API
 # (Jeśli uruchomisz to w Dockerze, pobierze klucz z .env kontenera)
-api_key = "AIzaSyA0P0LEtCVKZHhjmb1V9kmxhJXzKt7Njf4"
+api_key = "AIzaSyChmjz4mIuAwP1hsRoD-xGYamTmZkoatBQ"
 
 if not api_key:
     # Fallback dla testów lokalnych (jeśli odpalasz bez dockera)

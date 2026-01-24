@@ -9,6 +9,5 @@ google-genai>=0.3.0
 python-dotenv==1.0.1
 sqladmin==0.16.0
 cryptography==42.0.0
-python-multipart==0.0.6
 pyjwt
 itsdangerous

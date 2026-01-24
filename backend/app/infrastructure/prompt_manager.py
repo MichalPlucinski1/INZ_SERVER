@@ -6,7 +6,7 @@ import logging
 logger = logging.getLogger(__name__)
 
 # Ścieżka do katalogu z promptami
-PROMPTS_DIR = Path(__file__).parent / "prompts"
+PROMPTS_DIR = Path(__file__).parent.parent / "prompts"
 
 def build_analysis_prompt(device_data: dict, store_data: dict) -> str:
     """
