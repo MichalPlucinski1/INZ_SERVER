@@ -39,15 +39,9 @@ def check_url_reachability(url: str) -> dict:
     except Exception as e:
         return {"alive": False, "status_code": 0, "error": str(e)}
 
-def scrape_google_play(package_name: str, user_version_name: str = None) -> dict:
-    """
-    Pobiera dane o aplikacji ze sklepu Google Play (Polska).
-    Jeśli brakuje opisów w PL, próbuje pobrać dane z wersji angielskiej (US).
-    """
-    logger.info(f"🔍 Scraping Google Play: {package_name}")
-    
+def scrape_google_play(package_name: str, user_version_name: str = None) -> dict:    
     try:
-        # 1. Pobieranie danych ze sklepu PL
+        # 1. pobieranie danych ze sklepu PL
         try:
             store_data = app(
                 package_name,
@@ -55,21 +49,19 @@ def scrape_google_play(package_name: str, user_version_name: str = None) -> dict
                 country='pl'
             )
         except exceptions.NotFoundError:
-            # Jeśli nie ma w PL, spróbujmy od razu US (niektóre apki są tylko na rynek US)
-            logger.info(f" Nie znaleziono {package_name} w PL, próba US...")
+            # jeśli nie ma w PL, szukamy w US (niektóre apk są tylko w US)
             store_data = app(
                 package_name,
                 lang='en', 
                 country='us'
             )
 
-        # 1b. Fallback na język angielski (uzupełnianie braków)
+        # 1b. uzupełnienie z wersji najęzyk angielski
         # Sprawdzamy czy opis lub summary są puste/bardzo krótkie
         description = store_data.get('description', '')
         summary = store_data.get('summary', '')
 
         if not description or not summary or len(description) < 10:
-            logger.info(f"📝 Ubogie dane w PL dla {package_name}. Pobieranie wersji EN...")
             try:
                 store_data_en = app(
                     package_name,
@@ -111,9 +103,9 @@ def scrape_google_play(package_name: str, user_version_name: str = None) -> dict
             "updated_timestamp": store_data.get('updated'),
             "summary": store_data.get('summary'),
             "description": store_data.get('description'),
-            "recent_changes": store_data.get('recentChanges'), # Dodatkowo zwracamy listę zmian
+            "recent_changes": store_data.get('recentChanges'), 
             
-            # Sekcja Polityki
+          
             "privacy_policy_url": privacy_url,
             "privacy_policy_check": privacy_check
         }

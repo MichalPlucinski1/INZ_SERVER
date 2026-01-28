@@ -41,21 +41,21 @@ async def run_analysis_flow(db: Session, analysis_id: int):
                 "libraries": analysis.libraries
             }
 
-        # 4. GENEROWANIE PROMPTU (Użycie Twojego kodu)
-        # Generowanie promptu (Wstrzyknie device_data do {device_json})
+        # 4. GENEROWANIE PROMPTU
+        # Wstrzyknie device_data do {device_json}
         prompt = build_analysis_prompt(device_data, store_info)
 
         gemini = GeminiClient()
         ai_result = await gemini.generate_analysis(prompt)
 
-        # ZAPIS WYNIKÓW (Z zachowaniem trackers)
+        # ZAPIS WYNIKÓW
         analysis.status = "COMPLETED"
         analysis.security_light = ai_result.get("security_score", 0)
         analysis.privacy_light = ai_result.get("privacy_score", 0)
         analysis.short_summary = ai_result.get("short_summary")
         
         analysis.full_report = {
-            **ai_result, # Tu wejdzie trackers, risk_factors, verdict_details itd.
+            **ai_result,
             "store_info_snapshot": store_info,
             "security_alerts": sec_report['alerts']
         }

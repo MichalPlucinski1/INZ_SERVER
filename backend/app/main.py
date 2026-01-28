@@ -100,7 +100,7 @@ async def analyze_installed_apps(
 ):
     """
     ASYNC REQUEST-REPLY:
-    Przyjmuje listę apek, sprawdza bazę, zleca brakujące zadania i natychmiast odpowiada.
+    Przyjmuje listę apk, sprawdza bazę, zleca brakujące zadania i odpowiada.
     """
     # 1. Wywołanie Logiki Biznesowej (Use Case)
     analysis_records = execute_analyze_apps(db, payload.apps)
@@ -113,7 +113,7 @@ async def analyze_installed_apps(
         
         # Wyciąganie danych AI (EncryptedJSON deszyfruje się automatycznie)
         ai_data = record.full_report if (is_ready and record.full_report) else {}
-        
+        store_snapshot = ai_data.get("store_info_snapshot", {}) # Bezpieczne pobranie
         # Logika statusu producenta (Vendor Status)
         vendor_ui_status = "no_negative_data"
         if is_ready:
@@ -141,6 +141,8 @@ async def analyze_installed_apps(
             is_fingerprinting_suspected=record.is_fingerprinting_suspected,
             privacy_policy_exists=record.privacy_policy_exists,
             vendor_status=vendor_ui_status,
+            is_up_to_date=record.is_up_to_date, # Teraz to pole będzie wypełnione przez perform_analysis
+            is_in_store=store_snapshot.get("exists_in_store"), # Pobieramy z JSON-a
             
             permissions=record.permissions if record.permissions else [],
 
