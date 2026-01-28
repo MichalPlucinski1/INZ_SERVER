@@ -23,15 +23,14 @@ def build_analysis_prompt(device_data: dict, store_data: dict) -> str:
         device_json_str = json.dumps(device_data, indent=2, ensure_ascii=False)
         store_json_str = json.dumps(store_data, indent=2, ensure_ascii=False)
         
-        # ZMIANA: Używamy replace, bo .format() wywaliłby się na klamrach {} w przykładach JSON wewnątrz pliku txt
         final_prompt = template.replace("{store_json}", store_json_str)
         final_prompt = final_prompt.replace("{device_json}", device_json_str)
         
         return final_prompt
         
     except FileNotFoundError:
-        logger.error(f"❌ Prompt file not found at {prompt_path}")
+        logger.error(f"Prompt file not found at {prompt_path}")
         return f"CRITICAL ERROR: Prompt file missing. Data: {device_data}"
     except Exception as e:
-        logger.error(f"❌ Error building prompt: {str(e)}")
+        logger.error(f" Error building prompt: {str(e)}")
         raise e

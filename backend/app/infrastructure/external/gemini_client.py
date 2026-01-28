@@ -12,7 +12,7 @@ class GeminiClient:
     async def generate_analysis(self, prompt_text: str):
         # Wysyłamy prompt wygenerowany przez build_analysis_prompt
         response = self.client.models.generate_content(
-            model='gemini-2.0-flash', 
+            model='gemini-pro-latest', 
             contents=prompt_text,
             config=types.GenerateContentConfig(
                 response_mime_type='application/json',

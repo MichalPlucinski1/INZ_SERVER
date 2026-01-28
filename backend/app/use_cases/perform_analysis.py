@@ -16,15 +16,15 @@ async def run_analysis_flow(db: Session, analysis_id: int):
         # 1. POBIERANIE DANYCH (Scraper)
         store_info = scrape_google_play(analysis.package_name)
         sec_report = check_security_alerts(db, analysis.package_name, analysis.vendor_name, [analysis.signing_cert_hash])
-        # 2. INTERPRETACJA DANYCH (Twoje kontrolki prawda/fałsz)
-        technical_flags = {
-            "is_outdated": store_info.get("is_outdated", False),
-            "target_sdk_secure": (analysis.target_sdk or 0) >= 30,
-            "is_debug_enabled": analysis.is_debuggable,
-            "has_privacy_policy": bool(store_info.get("privacy_policy_url")),
-            "is_from_official_store": analysis.is_from_store,
-            "has_suspicious_certificate": analysis.cert_status == "suspicious"
-        }
+
+        analysis.is_up_to_date = not store_info.get("is_outdated", False) # Negacja, bo baza ma "up_to_date", a scraper "outdated"
+        analysis.privacy_policy_exists = bool(store_info.get("privacy_policy_url"))
+
+        if not store_info.get("exists_in_store", False):
+            analysis.is_up_to_date = False
+
+
+
 
         # 3. PRZYGOTOWANIE DANYCH DLA PROMPT_MANAGERA
         # Łączymy surowe dane z urządzenia z naszymi interpretacjami (flagi)
@@ -50,8 +50,8 @@ async def run_analysis_flow(db: Session, analysis_id: int):
 
         # ZAPIS WYNIKÓW (Z zachowaniem trackers)
         analysis.status = "COMPLETED"
-        analysis.security_light = ai_result.get("security_score", 3)
-        analysis.privacy_light = ai_result.get("privacy_score", 3)
+        analysis.security_light = ai_result.get("security_score", 0)
+        analysis.privacy_light = ai_result.get("privacy_score", 0)
         analysis.short_summary = ai_result.get("short_summary")
         
         analysis.full_report = {
@@ -61,7 +61,7 @@ async def run_analysis_flow(db: Session, analysis_id: int):
         }
         
     except Exception as e:
-        logger.error(f"AI Analysis failed for {analysis.package_name}: {e}")
+        logger.error(f"AI Analysis FAILED for {analysis.package_name}: {e}")
         analysis.status = "FAILED"
         raise e
     finally:

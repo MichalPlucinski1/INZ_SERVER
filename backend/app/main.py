@@ -89,7 +89,7 @@ def register_device(payload: schemas.RegisterRequest):
     """
     Rejestracja urządzenia i wydanie tokenu (Mock/Uproszczone).
     """
-    logger.info(f"📥 [REGISTER] Nowe urządzenie: {payload.uuid}")
+    logger.info(f"📥 [REGISTER] Nowe urządzenie: {'TEST'}")
     access_token = auth.create_access_token(data={"sub": payload.uuid})
     return {"access_token": access_token, "token_type": "bearer"}
 
@@ -160,7 +160,8 @@ async def analyze_installed_apps(
             ) if is_ready else None
         )
         results.append(ui_result)
-
+    logger.info(f"📊 [ANALYZE] Zwrócono wyniki dla {len(results)} aplikacji.")
+    logger.info(results)
     return schemas.AnalysisResponse(results=results)
 
 @app.get("/health")

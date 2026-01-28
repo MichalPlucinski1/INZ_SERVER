@@ -11,7 +11,7 @@ async def process_pending_tasks():
     logger.info("✅ Worker kolejki zadań uruchomiony (Tryb: Sekwencyjny).")
     
     # Stały odstęp bezpieczeństwa (w sekundach)
-    DELAY_BETWEEN_TASKS = 5.0 
+    DELAY_BETWEEN_TASKS = 2.0 
 
     while True:
         db = SessionLocal()
@@ -28,7 +28,7 @@ async def process_pending_tasks():
             ).first()
 
             if not task:
-                await asyncio.sleep(5) 
+                await asyncio.sleep(2) 
                 continue
 
             # 2. Blokada zadania w bazie danych przed rozpoczęciem pracy
